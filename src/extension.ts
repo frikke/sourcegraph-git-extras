@@ -10,18 +10,9 @@ export interface Settings {
     ['git.blame.lineDecorations']?: boolean
     ['git.blame.decorateWholeFile']?: boolean
     ['git.blame.showPreciseDate']?: boolean
-
-    experimentalFeatures?: {
-        enableExtensionsDecorationsColumnView?: boolean
-    }
 }
 
-const isBlameForSelectedLinesEnabled = () =>
-    !sourcegraph.configuration.get<Settings>().get('experimentalFeatures')?.enableExtensionsDecorationsColumnView ||
-    sourcegraph.internal.clientApplication !== 'sourcegraph'
-
-const decorationType =
-    sourcegraph.app.createDecorationType && sourcegraph.app.createDecorationType({ display: 'column' })
+const decorationType = sourcegraph.app.createDecorationType && sourcegraph.app.createDecorationType()
 
 const statusBarItemType = sourcegraph.app.createStatusBarItemType && sourcegraph.app.createStatusBarItemType()
 
@@ -41,7 +32,7 @@ export function activate(context: sourcegraph.ExtensionContext): void {
         // When the configuration or current file changes, publish new decorations.
         context.subscriptions.add(
             combineLatest(configurationChanges, selectionChanges).subscribe(([, { editor, selections }]) =>
-                decorate(editor, isBlameForSelectedLinesEnabled() ? selections : null)
+                decorate(editor, selections)
             )
         )
     } else {
@@ -62,8 +53,17 @@ export function activate(context: sourcegraph.ExtensionContext): void {
     // brief flicker of the old state when the file is reopened.
     async function decorate(editor: sourcegraph.CodeEditor, selections: sourcegraph.Selection[] | null): Promise<void> {
         const settings = sourcegraph.configuration.get<Settings>().value
+        const decorations = settings['git.blame.decorations'] || 'none'
+        const shouldQueryBlameHunks = Boolean(decorations === 'file' || (decorations === 'line' && selections?.length))
+
         try {
-            const hunks = await queryBlameHunks({ uri: editor.document.uri, sourcegraph })
+            const hunks = shouldQueryBlameHunks
+                ? await queryBlameHunks({
+                      uri: editor.document.uri,
+                      sourcegraph,
+                      selections: decorations === 'line' ? selections : null,
+                  })
+                : []
             const now = Date.now()
 
             // Check if the extension host supports status bar items (Introduced in Sourcegraph version 3.26.0).
